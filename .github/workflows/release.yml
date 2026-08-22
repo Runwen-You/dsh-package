@@ -25,12 +25,13 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Check out the packager
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Use Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
+          package-manager-cache: false
 
       - name: Enable Corepack
         shell: pwsh
@@ -60,8 +61,24 @@ jobs:
           }
 
           $tag = "v$version"
-          gh release view $tag --repo "${{ github.repository }}" *> $null
-          $releaseExists = $LASTEXITCODE -eq 0
+          $encodedTag = [uri]::EscapeDataString($tag)
+          $releaseUri = "https://api.github.com/repos/${{ github.repository }}/releases/tags/$encodedTag"
+          $headers = @{
+            Accept = 'application/vnd.github+json'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          try {
+            Invoke-RestMethod -Uri $releaseUri -Headers $headers -Method Get | Out-Null
+            $releaseExists = $true
+          } catch {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            if ($statusCode -eq 404) {
+              $releaseExists = $false
+            } else {
+              throw
+            }
+          }
           "commit=$commit" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
