@@ -269,6 +269,14 @@ try {
         'pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'run', 'package:win'
     ) -WorkingDirectory $workingRoot
 
+    if (-not $SkipTests) {
+        Write-Host 'Running desktop launch and preload bridge test...'
+        Invoke-Native -FilePath 'corepack' -ArgumentList @(
+            'pnpm', 'exec', 'vitest', 'run',
+            'apps/desktop/tests/main.e2e.spec.ts'
+        ) -WorkingDirectory $workingRoot
+    }
+
     $installerName = "DeepSeek-Harness-Setup-$version-x64.exe"
     $sourceInstaller = Join-Path $workingRoot ("apps\desktop\dist\$installerName")
     if (-not (Test-Path -LiteralPath $sourceInstaller)) {

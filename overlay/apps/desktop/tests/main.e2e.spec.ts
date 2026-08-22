@@ -39,7 +39,19 @@ describe('desktop application', () => {
     const window = await application.firstWindow({ timeout: 60_000 })
     await expect.poll(() => window.url(), { timeout: 60_000 }).toBe(url)
     expect(await window.title()).toContain('DeepSeek Harness')
-    expect((await window.locator('body').innerText()).trim()).not.toBe('')
+    await expect.poll(async () => (
+      await window.locator('body').innerText()
+    ).trim(), { timeout: 60_000 }).not.toBe('')
+    const updateState = await window.evaluate(async () => {
+      const desktop = (window as unknown as {
+        dshDesktop?: { getUpdateState?: () => Promise<unknown> }
+      }).dshDesktop
+      return desktop?.getUpdateState === undefined ? undefined : await desktop.getUpdateState()
+    })
+    expect(updateState).toMatchObject({
+      currentVersion: expect.stringMatching(/^\d+\.\d+\.\d+/),
+      status: expect.any(String),
+    })
     await expect(stat(dshHome)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
     await expect(stat(workspaceRoot)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
 

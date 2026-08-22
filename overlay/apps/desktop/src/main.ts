@@ -25,7 +25,7 @@ const PORT_ATTEMPTS = 100
 const STARTUP_TIMEOUT_MS = 45_000
 const TITLE_BAR_HEIGHT = 38
 
-const preloadPath = fileURLToPath(new URL('./preload.js', import.meta.url))
+const preloadPath = fileURLToPath(new URL('./preload.cjs', import.meta.url))
 
 let backend: BackendProcessHandle | undefined
 let backendReady = false
