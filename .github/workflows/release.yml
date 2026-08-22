@@ -1,0 +1,113 @@
+name: Build and publish desktop updates
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Optional upstream branch, tag, or commit
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out the packager
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        shell: pwsh
+        run: corepack enable
+
+      - name: Resolve the upstream version
+        id: upstream
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_REF: ${{ inputs.upstream_ref }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $upstreamPath = Join-Path $env:RUNNER_TEMP 'deepseek-harness-version'
+          git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/deepseek-harness.git $upstreamPath
+          git -C $upstreamPath fetch --force --tags origin
+
+          $requestedRef = $env:REQUESTED_REF
+          if ([string]::IsNullOrWhiteSpace($requestedRef)) {
+            $requestedRef = 'origin/HEAD'
+          }
+          $commit = (git -C $upstreamPath rev-parse --verify "${requestedRef}^{commit}").Trim()
+          $manifest = (git -C $upstreamPath show "${commit}:package.json" | Out-String | ConvertFrom-Json)
+          $version = [string]$manifest.version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw 'The upstream package.json has no version.'
+          }
+
+          $tag = "v$version"
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_exists=$($releaseExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Build installer and update metadata
+        if: steps.upstream.outputs.release_exists != 'true'
+        shell: powershell
+        run: .\scripts\build.ps1 -UpstreamRef '${{ steps.upstream.outputs.commit }}'
+
+      - name: Publish GitHub Release
+        if: steps.upstream.outputs.release_exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
+          UPSTREAM_COMMIT: ${{ steps.upstream.outputs.commit }}
+          VERSION: ${{ steps.upstream.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -LiteralPath dist -File -Filter "DeepSeek-Harness-Setup-$env:VERSION-x64.exe")
+          if ($installers.Count -ne 1) {
+            throw "Expected one installer for $env:VERSION, found $($installers.Count)."
+          }
+          $installer = $installers[0]
+          $blockmap = Get-Item -LiteralPath "$($installer.FullName).blockmap"
+          $updateManifest = Get-Item -LiteralPath 'dist\latest.yml'
+          $buildManifest = Get-Item -LiteralPath "dist\DeepSeek-Harness-Setup-$env:VERSION-x64.json"
+          $assets = @($installer.FullName, $blockmap.FullName, $updateManifest.FullName, $buildManifest.FullName)
+
+          $arguments = @(
+            'release', 'create', $env:RELEASE_TAG,
+            '--repo', '${{ github.repository }}',
+            '--target', '${{ github.sha }}',
+            '--title', "DeepSeek Harness $env:VERSION",
+            '--notes', "Windows x64 desktop package built from deepseek-ai/deepseek-harness@$env:UPSTREAM_COMMIT."
+          )
+          if ($env:VERSION.Contains('-')) {
+            $arguments += '--prerelease'
+          } else {
+            $arguments += '--latest'
+          }
+          $arguments += $assets
+          gh @arguments
+
+      - name: Report an existing release
+        if: steps.upstream.outputs.release_exists == 'true'
+        shell: pwsh
+        run: Write-Host 'Release ${{ steps.upstream.outputs.tag }} already exists; nothing to publish.'
