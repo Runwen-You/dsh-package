@@ -1,7 +1,7 @@
 {
   "name": "@runwen-you/dsh-client-ui-desktop",
   "description": "Desktop-only DSH Web settings and Electron window theme bridge",
-  "version": "0.1.0-rc.5",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "lib/index.js",

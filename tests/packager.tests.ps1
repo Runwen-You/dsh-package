@@ -63,10 +63,13 @@ try {
     $sourcePackageHash = Get-Sha256Hex -Path (Join-Path $sourceRoot 'package.json')
     $sourceWorkspaceHash = Get-Sha256Hex -Path (Join-Path $sourceRoot 'pnpm-workspace.yaml')
 
+    $expectedDesktopVersion = [string](Get-Content -LiteralPath (Join-Path $projectRoot 'overlay\apps\desktop\package.json') -Raw | ConvertFrom-Json).version
     $version = Prepare-UpstreamSource -OverlayRoot (Join-Path $projectRoot 'overlay') -WorkingRoot $workingRoot
-    Assert-Equal '9.8.7' $version 'The upstream version was not returned.'
+    Assert-Equal $expectedDesktopVersion $version 'The independent desktop version was not returned.'
     $desktopManifest = Get-Content -LiteralPath (Join-Path $workingRoot 'apps\desktop\package.json') -Raw | ConvertFrom-Json
-    Assert-Equal '9.8.7' $desktopManifest.version 'The desktop version was not synchronized.'
+    Assert-Equal $expectedDesktopVersion $desktopManifest.version 'The desktop version was not preserved from the overlay.'
+    $desktopPluginManifest = Get-Content -LiteralPath (Join-Path $workingRoot 'packages\client\ui-desktop\package.json') -Raw | ConvertFrom-Json
+    Assert-Equal $expectedDesktopVersion $desktopPluginManifest.version 'The desktop Web plugin version was not synchronized.'
     Assert-Equal '6.8.9' $desktopManifest.dependencies.'electron-updater' 'Registry dependencies were not preserved.'
     $unavailableWorkspaceDependencies = @($desktopManifest.dependencies.PSObject.Properties | Where-Object {
         ([string]$_.Value).StartsWith('workspace:')
@@ -87,7 +90,13 @@ try {
     Assert-True ($buildWorkContainer.StartsWith([System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()), [System.StringComparison]::OrdinalIgnoreCase)) 'The build work container is not under the system temporary directory.'
     Assert-True ($buildWorkContainer.Length -lt 100) 'The build work container is too long for deeply nested Node.js dependencies.'
 
-    Prepare-UpstreamSource -OverlayRoot (Join-Path $projectRoot 'overlay') -WorkingRoot $workingRoot | Out-Null
+    $overrideVersion = Prepare-UpstreamSource -OverlayRoot (Join-Path $projectRoot 'overlay') -WorkingRoot $workingRoot -DesktopVersion '0.2.1'
+    Assert-Equal '0.2.1' $overrideVersion 'The workflow desktop-version override was not returned.'
+    $desktopManifest = Get-Content -LiteralPath (Join-Path $workingRoot 'apps\desktop\package.json') -Raw | ConvertFrom-Json
+    $desktopPluginManifest = Get-Content -LiteralPath (Join-Path $workingRoot 'packages\client\ui-desktop\package.json') -Raw | ConvertFrom-Json
+    Assert-Equal '0.2.1' $desktopManifest.version 'The workflow desktop-version override was not applied.'
+    Assert-Equal '0.2.1' $desktopPluginManifest.version 'The workflow version was not applied to the desktop Web plugin.'
+    Prepare-UpstreamSource -OverlayRoot (Join-Path $projectRoot 'overlay') -WorkingRoot $workingRoot -DesktopVersion '0.2.1' | Out-Null
     $workspace = Get-Content -LiteralPath (Join-Path $workingRoot 'pnpm-workspace.yaml') -Raw
     Assert-Equal 1 ([regex]::Matches($workspace, "(?m)^  '@electron/get':").Count) 'The Electron override is not idempotent.'
     Assert-Equal 1 ([regex]::Matches($workspace, '(?m)^  electron:').Count) 'The Electron build permission is not idempotent.'

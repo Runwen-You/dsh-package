@@ -265,7 +265,8 @@ function Install-DesktopOverlay {
 function Prepare-UpstreamSource {
     param(
         [Parameter(Mandatory = $true)][string]$OverlayRoot,
-        [Parameter(Mandatory = $true)][string]$WorkingRoot
+        [Parameter(Mandatory = $true)][string]$WorkingRoot,
+        [string]$DesktopVersion
     )
 
     $rootManifestPath = Join-Path $WorkingRoot 'package.json'
@@ -282,10 +283,17 @@ function Prepare-UpstreamSource {
         throw 'The upstream root package has no version.'
     }
 
+    $overlayDesktopManifestPath = Join-Path $OverlayRoot 'apps\desktop\package.json'
+    $overlayDesktopManifest = Get-Content -LiteralPath $overlayDesktopManifestPath -Raw | ConvertFrom-Json
+    $resolvedDesktopVersion = if ([string]::IsNullOrWhiteSpace($DesktopVersion)) { [string]$overlayDesktopManifest.version } else { $DesktopVersion }
+    if ($resolvedDesktopVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$') {
+        throw "Desktop version is not valid SemVer: $resolvedDesktopVersion"
+    }
+
     Install-DesktopOverlay -OverlayRoot $OverlayRoot -WorkingRoot $WorkingRoot
     $desktopManifestPath = Join-Path $WorkingRoot 'apps\desktop\package.json'
-    Set-JsonVersion -Path $desktopManifestPath -Version ([string]$rootManifest.version)
-    Set-JsonVersion -Path (Join-Path $WorkingRoot 'packages\client\ui-desktop\package.json') -Version ([string]$rootManifest.version)
+    Set-JsonVersion -Path $desktopManifestPath -Version $resolvedDesktopVersion
+    Set-JsonVersion -Path (Join-Path $WorkingRoot 'packages\client\ui-desktop\package.json') -Version $resolvedDesktopVersion
     Set-JsonDependency -Path (Join-Path $WorkingRoot 'packages\bundle\web-app\package.json') -Name '@runwen-you/dsh-client-ui-desktop' -Version 'workspace:^'
     Remove-UnavailableWorkspaceDependencies -ManifestPath $desktopManifestPath -WorkingRoot $WorkingRoot
     Add-RequiredWorkspacePeers -ManifestPath $desktopManifestPath -WorkingRoot $WorkingRoot
@@ -318,7 +326,7 @@ function Prepare-UpstreamSource {
     Add-YamlMappingEntry -Path $workspacePath -Section 'allowBuilds' -Key 'electron' -Value 'true'
     Add-YamlMappingEntry -Path $workspacePath -Section 'allowBuilds' -Key 'electron-winstaller' -Value 'true'
 
-    return [string]$rootManifest.version
+    return $resolvedDesktopVersion
 }
 
 function Assert-ChildPath {

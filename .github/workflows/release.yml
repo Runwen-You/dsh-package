@@ -37,94 +37,117 @@ jobs:
         shell: pwsh
         run: corepack enable
 
-      - name: Resolve the upstream version
-        id: upstream
+      - name: Resolve desktop and DSH release inputs
+        id: release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_REF: ${{ inputs.upstream_ref }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $desktopManifest = Get-Content -LiteralPath 'overlay/apps/desktop/package.json' -Raw | ConvertFrom-Json
+          $baseVersion = [string]$desktopManifest.version
+          $baseMatch = [regex]::Match($baseVersion, '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$')
+          if (-not $baseMatch.Success) {
+            throw "The overlay desktop version must be stable major.minor.patch SemVer, got $baseVersion."
+          }
+
           $upstreamPath = Join-Path $env:RUNNER_TEMP 'deepseek-harness-version'
           git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/deepseek-harness.git $upstreamPath
           git -C $upstreamPath fetch --force --tags origin
-
           $requestedRef = $env:REQUESTED_REF
           if ([string]::IsNullOrWhiteSpace($requestedRef)) {
             $requestedRef = 'origin/HEAD'
           }
-          $commit = (git -C $upstreamPath rev-parse --verify "${requestedRef}^{commit}").Trim()
-          $manifest = (git -C $upstreamPath show "${commit}:package.json" | Out-String | ConvertFrom-Json)
-          $version = [string]$manifest.version
-          if ([string]::IsNullOrWhiteSpace($version)) {
+          $upstreamCommit = (git -C $upstreamPath rev-parse --verify "${requestedRef}^{commit}").Trim()
+          $upstreamManifest = (git -C $upstreamPath show "${upstreamCommit}:package.json" | Out-String | ConvertFrom-Json)
+          $upstreamVersion = [string]$upstreamManifest.version
+          if ([string]::IsNullOrWhiteSpace($upstreamVersion)) {
             throw 'The upstream package.json has no version.'
           }
 
-          $tag = "v$version"
-          $encodedTag = [uri]::EscapeDataString($tag)
-          $releaseUri = "https://api.github.com/repos/${{ github.repository }}/releases/tags/$encodedTag"
           $headers = @{
             Accept = 'application/vnd.github+json'
             Authorization = "Bearer $env:GH_TOKEN"
             'X-GitHub-Api-Version' = '2022-11-28'
           }
-          try {
-            Invoke-RestMethod -Uri $releaseUri -Headers $headers -Method Get | Out-Null
-            $releaseExists = $true
-          } catch {
-            $statusCode = [int]$_.Exception.Response.StatusCode
-            if ($statusCode -eq 404) {
-              $releaseExists = $false
+          $major = [int]$baseMatch.Groups['major'].Value
+          $minor = [int]$baseMatch.Groups['minor'].Value
+          $basePatch = [int]$baseMatch.Groups['patch'].Value
+          $tagPattern = "^v$major\.$minor\.(?<patch>\d+)$"
+          $releasesUri = 'https://api.github.com/repos/${{ github.repository }}/releases?per_page=100'
+          $releases = @(Invoke-RestMethod -Uri $releasesUri -Headers $headers -Method Get)
+          $candidates = @(
+            foreach ($existingRelease in $releases) {
+              if ($existingRelease.draft -eq $true) { continue }
+              $tagMatch = [regex]::Match([string]$existingRelease.tag_name, $tagPattern)
+              if (-not $tagMatch.Success) { continue }
+              [pscustomobject]@{
+                patch = [int]$tagMatch.Groups['patch'].Value
+                release = $existingRelease
+              }
+            }
+          )
+          $latest = $candidates | Sort-Object patch -Descending | Select-Object -First 1
+          $needsRelease = $true
+          $desktopVersion = $baseVersion
+          if ($null -ne $latest) {
+            $body = [string]$latest.release.body
+            $sameDesktopSource = [string]$latest.release.target_commitish -eq '${{ github.sha }}'
+            $sameDshSource = $body.Contains("DSH source: $upstreamCommit")
+            if ($sameDesktopSource -and $sameDshSource) {
+              $needsRelease = $false
+              $desktopVersion = ([string]$latest.release.tag_name).TrimStart('v')
             } else {
-              throw
+              $nextPatch = [Math]::Max($basePatch, $latest.patch + 1)
+              $desktopVersion = "$major.$minor.$nextPatch"
             }
           }
-          "commit=$commit" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
+          $tag = "v$desktopVersion"
+          "desktop_version=$desktopVersion" >> $env:GITHUB_OUTPUT
+          "dsh_version=$upstreamVersion" >> $env:GITHUB_OUTPUT
+          "needs_release=$($needsRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
-          "release_exists=$($releaseExists.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "upstream_commit=$upstreamCommit" >> $env:GITHUB_OUTPUT
 
       - name: Build installer and update metadata
-        if: steps.upstream.outputs.release_exists != 'true'
+        if: steps.release.outputs.needs_release == 'true'
         shell: powershell
-        run: .\scripts\build.ps1 -UpstreamRef '${{ steps.upstream.outputs.commit }}'
+        run: .\scripts\build.ps1 -UpstreamRef '${{ steps.release.outputs.upstream_commit }}' -DesktopVersion '${{ steps.release.outputs.desktop_version }}'
 
       - name: Publish GitHub Release
-        if: steps.upstream.outputs.release_exists != 'true'
+        if: steps.release.outputs.needs_release == 'true'
         shell: pwsh
         env:
+          DESKTOP_VERSION: ${{ steps.release.outputs.desktop_version }}
+          DSH_VERSION: ${{ steps.release.outputs.dsh_version }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.upstream.outputs.tag }}
-          UPSTREAM_COMMIT: ${{ steps.upstream.outputs.commit }}
-          VERSION: ${{ steps.upstream.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          UPSTREAM_COMMIT: ${{ steps.release.outputs.upstream_commit }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $installers = @(Get-ChildItem -LiteralPath dist -File -Filter "DeepSeek-Harness-Setup-$env:VERSION-x64.exe")
+          $installers = @(Get-ChildItem -LiteralPath dist -File -Filter "DeepSeek-Harness-Setup-$env:DESKTOP_VERSION-x64.exe")
           if ($installers.Count -ne 1) {
-            throw "Expected one installer for $env:VERSION, found $($installers.Count)."
+            throw "Expected one installer for desktop $env:DESKTOP_VERSION, found $($installers.Count)."
           }
           $installer = $installers[0]
           $blockmap = Get-Item -LiteralPath "$($installer.FullName).blockmap"
           $updateManifest = Get-Item -LiteralPath 'dist\latest.yml'
-          $buildManifest = Get-Item -LiteralPath "dist\DeepSeek-Harness-Setup-$env:VERSION-x64.json"
+          $buildManifest = Get-Item -LiteralPath "dist\DeepSeek-Harness-Setup-$env:DESKTOP_VERSION-x64.json"
           $assets = @($installer.FullName, $blockmap.FullName, $updateManifest.FullName, $buildManifest.FullName)
-
+          $notes = "Windows x64 desktop package.`n`nBundled DSH version: $env:DSH_VERSION`nDSH source: $env:UPSTREAM_COMMIT`nDesktop source: ${{ github.sha }}"
           $arguments = @(
             'release', 'create', $env:RELEASE_TAG,
             '--repo', '${{ github.repository }}',
             '--target', '${{ github.sha }}',
-            '--title', "DeepSeek Harness $env:VERSION",
-            '--notes', "Windows x64 desktop package built from deepseek-ai/deepseek-harness@$env:UPSTREAM_COMMIT."
+            '--title', "DeepSeek Harness Desktop $env:DESKTOP_VERSION",
+            '--notes', $notes,
+            '--latest'
           )
-          if ($env:VERSION.Contains('-')) {
-            $arguments += '--prerelease'
-          } else {
-            $arguments += '--latest'
-          }
           $arguments += $assets
           gh @arguments
 
-      - name: Report an existing release
-        if: steps.upstream.outputs.release_exists == 'true'
+      - name: Report an unchanged release
+        if: steps.release.outputs.needs_release != 'true'
         shell: pwsh
-        run: Write-Host 'Release ${{ steps.upstream.outputs.tag }} already exists; nothing to publish.'
+        run: Write-Host 'Desktop source and bundled DSH source are unchanged; no release is needed.'

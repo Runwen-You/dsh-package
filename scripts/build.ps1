@@ -2,6 +2,7 @@
     [string]$SourceRoot,
     [string]$UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git',
     [string]$UpstreamRef,
+    [string]$DesktopVersion,
     [switch]$Offline,
     [switch]$KeepWorkDirectory,
     [switch]$SkipTests,
@@ -24,6 +25,7 @@ if (Test-Path -LiteralPath $configPath) {
 if ($PSBoundParameters.ContainsKey('SourceRoot')) { $SourceRoot = $PSBoundParameters['SourceRoot'] }
 if ($PSBoundParameters.ContainsKey('UpstreamUrl')) { $UpstreamUrl = $PSBoundParameters['UpstreamUrl'] }
 if ($PSBoundParameters.ContainsKey('UpstreamRef')) { $UpstreamRef = $PSBoundParameters['UpstreamRef'] }
+if ($PSBoundParameters.ContainsKey('DesktopVersion')) { $DesktopVersion = $PSBoundParameters['DesktopVersion'] }
 if ($PSBoundParameters.ContainsKey('Offline')) { $Offline = $PSBoundParameters['Offline'] }
 if ($PSBoundParameters.ContainsKey('KeepWorkDirectory')) { $KeepWorkDirectory = $PSBoundParameters['KeepWorkDirectory'] }
 if ($PSBoundParameters.ContainsKey('SkipTests')) { $SkipTests = $PSBoundParameters['SkipTests'] }
@@ -235,7 +237,8 @@ try {
     Assert-SourceInfo -SourceInfo $sourceInfo
 
     Write-Host "Injecting the desktop overlay into temporary source $workingRoot..."
-    $version = Prepare-UpstreamSource -OverlayRoot $overlayRoot -WorkingRoot $workingRoot
+    $version = Prepare-UpstreamSource -OverlayRoot $overlayRoot -WorkingRoot $workingRoot -DesktopVersion $DesktopVersion
+    $upstreamVersion = [string](Get-Content -LiteralPath (Join-Path $workingRoot 'package.json') -Raw | ConvertFrom-Json).version
     $packageManager = (Get-Content -LiteralPath (Join-Path $workingRoot 'package.json') -Raw | ConvertFrom-Json).packageManager
     if ([string]::IsNullOrWhiteSpace([string]$packageManager) -or -not ([string]$packageManager).StartsWith('pnpm@')) {
         throw "The upstream project does not pin pnpm through packageManager: $packageManager"
@@ -285,13 +288,16 @@ try {
         Copy-Item -LiteralPath $sourceUpdateArtifact -Destination (Join-Path $distRoot $updateArtifact) -Force
     }
     $hash = Get-Sha256Hex -Path $destinationInstaller
+    $desktopSourceCommit = Invoke-NativeCapture -FilePath 'git' -ArgumentList @('-C', $projectRoot, 'rev-parse', 'HEAD')
     $metadata = [ordered]@{
         artifact = $installerName
         builtAt = (Get-Date).ToUniversalTime().ToString('o')
         desktopVersion = $version
+        desktopSourceCommit = $desktopSourceCommit
         releaseArtifacts = @($installerName, "${installerName}.blockmap", 'latest.yml')
         sha256 = $hash
         upstreamCommit = $sourceInfo.commit
+        upstreamVersion = $upstreamVersion
         upstreamRef = $sourceInfo.ref
         upstreamSource = $sourceInfo.source
     }
