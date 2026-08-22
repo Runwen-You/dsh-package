@@ -62,7 +62,7 @@ export function createBackendSpawnSpec(options: BackendSpawnOptions): BackendSpa
   }
   delete env.ELECTRON_RUN_AS_NODE
   return {
-    args: [options.cliEntry, 'web', '--host', '127.0.0.1', '--port', String(options.port)],
+    args: [options.cliEntry, 'web', '--host', '127.0.0.1', '--port', String(options.port), '--no-open'],
     command: options.nodeExecutable,
     options: {
       cwd: options.workspaceRoot,
