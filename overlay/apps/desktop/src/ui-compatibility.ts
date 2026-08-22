@@ -10,6 +10,32 @@ import type { WebContents } from 'electron'
  * leaves the host-owned composer gap in charge of vertical spacing.
  */
 export const DESKTOP_UI_COMPATIBILITY_CSS = `
+:root {
+  --dsh-desktop-titlebar-height: 38px;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f7f8fa));
+}
+
+html {
+  box-sizing: border-box;
+  height: 100%;
+  padding-top: var(--dsh-desktop-titlebar-height);
+}
+
+body {
+  height: calc(100vh - var(--dsh-desktop-titlebar-height)) !important;
+  min-height: 0 !important;
+}
+
+body::before {
+  -webkit-app-region: drag;
+  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f7f8fa));
+  content: '';
+  height: var(--dsh-desktop-titlebar-height);
+  inset: 0 0 auto 0;
+  position: fixed;
+  z-index: 2147483646;
+}
+
 [data-gitgraph-chip-anchor] {
   margin-bottom: 0 !important;
 }

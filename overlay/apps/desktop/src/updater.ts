@@ -52,6 +52,7 @@ export class DesktopUpdateController {
   private manualCheck = false
   private promptingForDownload = false
   private promptingForInstall = false
+  private downloadedInfo: DesktopUpdateInfo | undefined
 
   constructor(private readonly options: DesktopUpdateControllerOptions) {
     const { updater } = options
@@ -101,6 +102,20 @@ export class DesktopUpdateController {
     }
   }
 
+  /** Install a previously downloaded update after the Web settings UI asks to restart. */
+  async installDownloaded(): Promise<void> {
+    if (this.downloadedInfo === undefined || this.promptingForInstall) return
+    this.promptingForInstall = true
+    try {
+      await this.options.prepareInstall()
+      this.options.updater.quitAndInstall(false, true)
+    } catch (error) {
+      await this.options.ui.reportError(errorMessage(error))
+    } finally {
+      this.promptingForInstall = false
+    }
+  }
+
   private async handleUpdateAvailable(info: DesktopUpdateInfo): Promise<void> {
     this.manualCheck = false
     if (this.promptingForDownload || this.downloading) return
@@ -122,17 +137,14 @@ export class DesktopUpdateController {
 
   private async handleUpdateDownloaded(info: DesktopUpdateInfo): Promise<void> {
     this.downloading = false
+    this.downloadedInfo = info
     this.options.ui.setDownloadProgress(undefined)
     if (this.promptingForInstall) return
-    this.promptingForInstall = true
     try {
       if (!await this.options.ui.confirmInstall(info)) return
-      await this.options.prepareInstall()
-      this.options.updater.quitAndInstall(false, true)
+      await this.installDownloaded()
     } catch (error) {
       await this.options.ui.reportError(errorMessage(error))
-    } finally {
-      this.promptingForInstall = false
     }
   }
 }

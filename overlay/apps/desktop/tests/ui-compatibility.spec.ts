@@ -6,6 +6,12 @@ import {
 } from '../src/ui-compatibility.ts'
 
 describe('desktop Web UI compatibility styles', () => {
+  it('reserves a theme-token-backed drag region for the hidden title bar', () => {
+    expect(DESKTOP_UI_COMPATIBILITY_CSS).toContain('--dsh-desktop-titlebar-height: 38px')
+    expect(DESKTOP_UI_COMPATIBILITY_CSS).toContain('-webkit-app-region: drag')
+    expect(DESKTOP_UI_COMPATIBILITY_CSS).toContain('--dsw-specific-sidebar-fill')
+  })
+
   it('neutralizes the git graph dock negative margin that overlaps the composer', () => {
     expect(DESKTOP_UI_COMPATIBILITY_CSS).toContain('[data-gitgraph-chip-anchor]')
     expect(DESKTOP_UI_COMPATIBILITY_CSS).toContain('margin-bottom: 0 !important')

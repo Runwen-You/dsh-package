@@ -47,7 +47,7 @@ describe('desktop backend startup', () => {
       port: 3083,
       workspaceRoot: 'C:\\Users\\me\\Documents\\DeepSeek Harness Workspace',
     })).toEqual({
-      args: ['D:\\app\\bin.js', 'web', '--host', '127.0.0.1', '--port', '3083', '--no-open'],
+      args: ['D:\\app\\bin.js', 'web', '--host', '127.0.0.1', '--port', '3083'],
       command: 'D:\\app\\node.exe',
       options: {
         cwd: 'C:\\Users\\me\\Documents\\DeepSeek Harness Workspace',

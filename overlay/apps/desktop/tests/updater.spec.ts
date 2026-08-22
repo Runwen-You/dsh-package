@@ -109,6 +109,32 @@ describe('desktop updater', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('can defer installation until the Web settings row requests a restart', async () => {
+    const updater = new FakeUpdater()
+    const ui = createUi({ confirmInstall: vi.fn(async () => false) })
+    const prepareInstall = vi.fn(async () => undefined)
+    const controller = new DesktopUpdateController({
+      currentVersion: '1.2.3',
+      enabled: true,
+      prepareInstall,
+      ui,
+      updater,
+    })
+
+    updater.emit('update-available', { version: '1.3.0' })
+    await settle()
+    updater.emit('update-downloaded', { version: '1.3.0' })
+    await settle()
+
+    expect(prepareInstall).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+
+    await controller.installDownloaded()
+
+    expect(prepareInstall).toHaveBeenCalledOnce()
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
   it('explains why updates are unavailable in a development launch', async () => {
     const updater = new FakeUpdater()
     const ui = createUi()

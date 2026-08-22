@@ -40,6 +40,26 @@ try {
         '  esbuild: true'
     )
     Copy-Item -LiteralPath (Join-Path $sourceRoot 'package.json'), (Join-Path $sourceRoot 'pnpm-workspace.yaml') -Destination $workingRoot -Force
+    $webBundleRoot = Join-Path $workingRoot 'packages\bundle\web-app'
+    New-Item -ItemType Directory -Force -Path $webBundleRoot | Out-Null
+    Write-Utf8File -Path (Join-Path $webBundleRoot 'package.json') -Lines @(
+        '{',
+        '  "name": "@deepseek-ai/dsh-web-app",',
+        '  "dependencies": {}',
+        '}'
+    )
+    Write-Utf8File -Path (Join-Path $webBundleRoot 'cordis.patch.yml') -Lines @(
+        '- insert:',
+        '    - id: ui-settings-general',
+        "      name: '@deepseek-ai/dsh-client-ui-settings-general'"
+    )
+    Write-Utf8File -Path (Join-Path $workingRoot 'tsconfig.client.json') -Lines @(
+        '{',
+        '  "references": [',
+        '    { "path": "./apps/web" }',
+        '  ]',
+        '}'
+    )
     $sourcePackageHash = Get-Sha256Hex -Path (Join-Path $sourceRoot 'package.json')
     $sourceWorkspaceHash = Get-Sha256Hex -Path (Join-Path $sourceRoot 'pnpm-workspace.yaml')
 
@@ -51,8 +71,15 @@ try {
     $unavailableWorkspaceDependencies = @($desktopManifest.dependencies.PSObject.Properties | Where-Object {
         ([string]$_.Value).StartsWith('workspace:')
     })
-    Assert-Equal 0 $unavailableWorkspaceDependencies.Count 'Unavailable workspace dependencies were not pruned.'
+    Assert-Equal 1 $unavailableWorkspaceDependencies.Count 'Unexpected workspace dependencies remained after pruning.'
+    Assert-Equal '@runwen-you/dsh-client-ui-desktop' $unavailableWorkspaceDependencies[0].Name 'The retained workspace dependency is not the installed desktop Web plugin.'
     Assert-True (Test-Path -LiteralPath (Join-Path $workingRoot 'apps\desktop\src\main.ts')) 'The desktop overlay was not installed.'
+    Assert-True (Test-Path -LiteralPath (Join-Path $workingRoot 'packages\client\ui-desktop\src\client\index.ts')) 'The desktop Web plugin was not installed.'
+    $webPatch = Get-Content -LiteralPath (Join-Path $webBundleRoot 'cordis.patch.yml') -Raw
+    Assert-Equal 1 ([regex]::Matches($webPatch, '(?m)^    - id: ui-desktop\r?$').Count) 'The desktop Web plugin row was not inserted once.'
+    $webBundleManifest = Get-Content -LiteralPath (Join-Path $webBundleRoot 'package.json') -Raw | ConvertFrom-Json
+    Assert-Equal 'workspace:^' $webBundleManifest.dependencies.'@runwen-you/dsh-client-ui-desktop' 'The desktop Web plugin was not linked from the Web bundle.'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $workingRoot 'tsconfig.client.json') -Raw).Contains('packages/client/ui-desktop')) 'The desktop Web plugin project reference was not inserted.'
     Assert-True (Test-Path -LiteralPath (Join-Path $workingRoot 'apps\desktop\bin\dsh.cmd')) 'The dsh command shim was not installed.'
     Assert-True (Test-Path -LiteralPath (Join-Path $workingRoot 'apps\desktop\bin\pnpm.cmd')) 'The bundled pnpm command shim was not installed.'
 
@@ -65,6 +92,11 @@ try {
     Assert-Equal 1 ([regex]::Matches($workspace, "(?m)^  '@electron/get':").Count) 'The Electron override is not idempotent.'
     Assert-Equal 1 ([regex]::Matches($workspace, '(?m)^  electron:').Count) 'The Electron build permission is not idempotent.'
     Assert-Equal 1 ([regex]::Matches($workspace, '(?m)^  electron-winstaller:').Count) 'The installer build permission is not idempotent.'
+    $webPatch = Get-Content -LiteralPath (Join-Path $webBundleRoot 'cordis.patch.yml') -Raw
+    Assert-Equal 1 ([regex]::Matches($webPatch, '(?m)^    - id: ui-desktop\r?$').Count) 'The desktop Web plugin row is not idempotent.'
+    $webBundleManifest = Get-Content -LiteralPath (Join-Path $webBundleRoot 'package.json') -Raw | ConvertFrom-Json
+    Assert-Equal 'workspace:^' $webBundleManifest.dependencies.'@runwen-you/dsh-client-ui-desktop' 'The Web bundle dependency is not idempotent.'
+    Assert-Equal 1 ([regex]::Matches((Get-Content -LiteralPath (Join-Path $workingRoot 'tsconfig.client.json') -Raw), 'packages/client/ui-desktop').Count) 'The desktop Web plugin project reference is not idempotent.'
 
     Assert-Equal $sourcePackageHash (Get-Sha256Hex -Path (Join-Path $sourceRoot 'package.json')) 'The source package.json was modified.'
     Assert-Equal $sourceWorkspaceHash (Get-Sha256Hex -Path (Join-Path $sourceRoot 'pnpm-workspace.yaml')) 'The source workspace config was modified.'

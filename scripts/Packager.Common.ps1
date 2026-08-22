@@ -88,6 +88,29 @@ function Set-JsonVersion {
     Write-Utf8File -Path $Path -Lines @($json)
 }
 
+function Set-JsonDependency {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $manifest = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $dependenciesProperty = $manifest.PSObject.Properties['dependencies']
+    if ($null -eq $dependenciesProperty) {
+        $manifest | Add-Member -MemberType NoteProperty -Name 'dependencies' -Value ([pscustomobject]@{})
+    }
+    $dependencyProperty = $manifest.dependencies.PSObject.Properties[$Name]
+    if ($null -eq $dependencyProperty) {
+        $manifest.dependencies | Add-Member -MemberType NoteProperty -Name $Name -Value $Version
+    }
+    else {
+        $dependencyProperty.Value = $Version
+    }
+    $json = $manifest | ConvertTo-Json -Depth 100
+    Write-Utf8File -Path $Path -Lines @($json)
+}
+
 function Remove-UnavailableWorkspaceDependencies {
     param(
         [Parameter(Mandatory = $true)][string]$ManifestPath,
@@ -95,7 +118,7 @@ function Remove-UnavailableWorkspaceDependencies {
     )
 
     $availablePackages = @{}
-    foreach ($packagePath in Get-ChildItem -LiteralPath $WorkingRoot -Filter 'package.json' -File -Recurse) {
+    foreach ($packagePath in Get-ChildItem -LiteralPath $WorkingRoot -Filter 'package.json' -File -Recurse | Where-Object { $_.FullName -notmatch '[\\/](?:node_modules|\.git)[\\/]' }) {
         try {
             $packageJson = [System.IO.File]::ReadAllText($packagePath.FullName, [System.Text.Encoding]::UTF8)
             $packageManifest = $packageJson | ConvertFrom-Json
@@ -130,7 +153,7 @@ function Add-RequiredWorkspacePeers {
     )
 
     $workspacePackages = @{}
-    foreach ($packagePath in Get-ChildItem -LiteralPath $WorkingRoot -Filter 'package.json' -File -Recurse) {
+    foreach ($packagePath in Get-ChildItem -LiteralPath $WorkingRoot -Filter 'package.json' -File -Recurse | Where-Object { $_.FullName -notmatch '[\\/](?:node_modules|\.git)[\\/]' }) {
         $packageJson = [System.IO.File]::ReadAllText($packagePath.FullName, [System.Text.Encoding]::UTF8)
         $packageManifest = $packageJson | ConvertFrom-Json
         if (-not [string]::IsNullOrWhiteSpace([string]$packageManifest.name)) {
@@ -226,6 +249,17 @@ function Install-DesktopOverlay {
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+
+    $clientSource = Join-Path $OverlayRoot 'packages\client\ui-desktop'
+    $clientDestination = Join-Path $WorkingRoot 'packages\client\ui-desktop'
+    if (-not (Test-Path -LiteralPath (Join-Path $clientSource 'package.json'))) {
+        throw "Desktop Web overlay is incomplete: $clientSource"
+    }
+    if (Test-Path -LiteralPath $clientDestination) {
+        Remove-Item -LiteralPath $clientDestination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $clientDestination) | Out-Null
+    Copy-Item -LiteralPath $clientSource -Destination $clientDestination -Recurse -Force
 }
 
 function Prepare-UpstreamSource {
@@ -251,8 +285,35 @@ function Prepare-UpstreamSource {
     Install-DesktopOverlay -OverlayRoot $OverlayRoot -WorkingRoot $WorkingRoot
     $desktopManifestPath = Join-Path $WorkingRoot 'apps\desktop\package.json'
     Set-JsonVersion -Path $desktopManifestPath -Version ([string]$rootManifest.version)
+    Set-JsonVersion -Path (Join-Path $WorkingRoot 'packages\client\ui-desktop\package.json') -Version ([string]$rootManifest.version)
+    Set-JsonDependency -Path (Join-Path $WorkingRoot 'packages\bundle\web-app\package.json') -Name '@runwen-you/dsh-client-ui-desktop' -Version 'workspace:^'
     Remove-UnavailableWorkspaceDependencies -ManifestPath $desktopManifestPath -WorkingRoot $WorkingRoot
     Add-RequiredWorkspacePeers -ManifestPath $desktopManifestPath -WorkingRoot $WorkingRoot
+
+    $webPatchPath = Join-Path $WorkingRoot 'packages\bundle\web-app\cordis.patch.yml'
+    $webPatch = [System.IO.File]::ReadAllText($webPatchPath, [System.Text.Encoding]::UTF8)
+    if ($webPatch -notmatch '(?m)^\s+- id: ui-desktop\s*$') {
+        $settingsMarker = "    - id: ui-settings-general`n      name: '@deepseek-ai/dsh-client-ui-settings-general'"
+        $normalizedPatch = $webPatch.Replace("`r`n", "`n")
+        if (-not $normalizedPatch.Contains($settingsMarker)) {
+            throw "Could not locate the General settings row in $webPatchPath"
+        }
+        $desktopRow = "`n`n    # Desktop-only bridge: native title bar theme sync and updater settings row.`n    - id: ui-desktop`n      name: '@runwen-you/dsh-client-ui-desktop'"
+        $normalizedPatch = $normalizedPatch.Replace($settingsMarker, $settingsMarker + $desktopRow)
+        Write-Utf8File -Path $webPatchPath -Lines @($normalizedPatch.TrimEnd("`n") -split "`n")
+    }
+
+    $clientConfigPath = Join-Path $WorkingRoot 'tsconfig.client.json'
+    $clientConfig = [System.IO.File]::ReadAllText($clientConfigPath, [System.Text.Encoding]::UTF8)
+    if ($clientConfig -notmatch 'packages/client/ui-desktop') {
+        $configMarker = '    { "path": "./apps/web" }'
+        if (-not $clientConfig.Contains($configMarker)) {
+            throw "Could not locate the Web project reference in $clientConfigPath"
+        }
+        $clientConfig = $clientConfig.Replace($configMarker, "    { `"path`": `"./packages/client/ui-desktop`" },`r`n$configMarker")
+        Write-Utf8File -Path $clientConfigPath -Lines @($clientConfig -split "`r?`n")
+    }
+
     Add-YamlMappingEntry -Path $workspacePath -Section 'overrides' -Key "'@electron/get'" -Value "'5.1.0'"
     Add-YamlMappingEntry -Path $workspacePath -Section 'allowBuilds' -Key 'electron' -Value 'true'
     Add-YamlMappingEntry -Path $workspacePath -Section 'allowBuilds' -Key 'electron-winstaller' -Value 'true'

@@ -1,11 +1,13 @@
 import { createWriteStream } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron'
-import type { MessageBoxOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import electronUpdater from 'electron-updater'
+import { DESKTOP_IPC } from './desktop-api.ts'
+import type { DesktopColorScheme, DesktopUpdateState } from './desktop-api.ts'
 import {
   createBackendSpawnSpec,
   findAvailablePort,
@@ -16,17 +18,26 @@ import {
 import type { BackendProcessHandle } from './runtime.ts'
 import { installDesktopUiCompatibility } from './ui-compatibility.ts'
 import { DesktopUpdateController } from './updater.ts'
-import type { DesktopAutoUpdater, DesktopUpdateInfo } from './updater.ts'
+import type { DesktopAutoUpdater } from './updater.ts'
 
 const DEFAULT_PORT = 3080
 const PORT_ATTEMPTS = 100
 const STARTUP_TIMEOUT_MS = 45_000
+const TITLE_BAR_HEIGHT = 38
+
+const preloadPath = fileURLToPath(new URL('./preload.js', import.meta.url))
 
 let backend: BackendProcessHandle | undefined
 let backendReady = false
 let desktopUpdater: DesktopUpdateController | undefined
 let mainWindow: BrowserWindow | undefined
 let shutdownStarted = false
+let updateState: DesktopUpdateState = {
+  currentVersion: app.getVersion(),
+  status: 'idle',
+}
+
+let webColorScheme: DesktopColorScheme | undefined
 
 function parseFirstPort(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_PORT
@@ -65,69 +76,46 @@ function startupPage(): string {
 }
 
 function installApplicationMenu(): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    {
-      label: '文件',
-      submenu: [{ role: 'quit', label: '退出' }],
-    },
-    {
-      label: '编辑',
-      submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
-        { type: 'separator' },
-        { role: 'cut', label: '剪切' },
-        { role: 'copy', label: '复制' },
-        { role: 'paste', label: '粘贴' },
-        { role: 'selectAll', label: '全选' },
-      ],
-    },
-    {
-      label: '视图',
-      submenu: [
-        { role: 'reload', label: '重新加载' },
-        { role: 'forceReload', label: '强制重新加载' },
-        { type: 'separator' },
-        { role: 'resetZoom', label: '实际大小' },
-        { role: 'zoomIn', label: '放大' },
-        { role: 'zoomOut', label: '缩小' },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: '全屏' },
-      ],
-    },
-    {
-      label: '帮助',
-      submenu: [
-        {
-          label: '检查更新…',
-          click: () => void desktopUpdater?.check(true),
-        },
-        { type: 'separator' },
-        {
-          label: '关于 DeepSeek Harness',
-          click: () => void showDesktopMessage({
-            buttons: ['确定'],
-            detail: `版本 ${app.getVersion()}`,
-            message: 'DeepSeek Harness',
-            title: '关于 DeepSeek Harness',
-            type: 'info',
-          }),
-        },
-      ],
-    },
-  ]))
+  Menu.setApplicationMenu(null)
 }
 
-async function showDesktopMessage(options: MessageBoxOptions): Promise<number> {
+function publishUpdateState(patch: Partial<DesktopUpdateState>): void {
+  updateState = { ...updateState, ...patch }
   const window = mainWindow
-  const result = window !== undefined && !window.isDestroyed()
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options)
-  return result.response
+  if (window === undefined || window.isDestroyed()) return
+  window.webContents.send(DESKTOP_IPC.updateState, updateState)
 }
 
-function updateDetail(info: DesktopUpdateInfo): string {
-  return `当前版本：${app.getVersion()}\n新版本：${info.version}`
+function applyWindowColorScheme(scheme: DesktopColorScheme): void {
+  const window = mainWindow
+  if (window === undefined || window.isDestroyed()) return
+  const dark = scheme === 'dark'
+  window.setBackgroundColor(dark ? '#17181b' : '#f7f8fa')
+  window.setTitleBarOverlay({
+    color: '#00000000',
+    height: TITLE_BAR_HEIGHT,
+    symbolColor: dark ? '#e6e8eb' : '#30343b',
+  })
+}
+
+function configureDesktopIpc(): void {
+  ipcMain.handle(DESKTOP_IPC.getUpdateState, () => updateState)
+  ipcMain.handle(DESKTOP_IPC.checkForUpdates, async () => {
+    publishUpdateState({ error: undefined, progress: undefined, status: 'checking' })
+    await desktopUpdater?.check(true)
+  })
+  ipcMain.handle(DESKTOP_IPC.installUpdate, async () => {
+    await desktopUpdater?.installDownloaded()
+  })
+  ipcMain.on(DESKTOP_IPC.setColorScheme, (_event, scheme: unknown) => {
+    if (scheme !== 'light' && scheme !== 'dark') return
+    webColorScheme = scheme
+    applyWindowColorScheme(scheme)
+  })
+  nativeTheme.on('updated', () => {
+    if (webColorScheme !== undefined) return
+    applyWindowColorScheme(nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+  })
 }
 
 async function prepareUpdateInstall(): Promise<void> {
@@ -146,48 +134,29 @@ function configureDesktopUpdates(): void {
     enabled: app.isPackaged && process.env.DSH_DESKTOP_DISABLE_AUTO_UPDATE !== '1',
     prepareInstall: prepareUpdateInstall,
     ui: {
-      confirmDownload: async info => await showDesktopMessage({
-        buttons: ['下载更新', '稍后'],
-        cancelId: 1,
-        defaultId: 0,
-        detail: `${updateDetail(info)}\n\n下载将在后台进行，完成后会再次询问是否重启安装。`,
-        message: `发现 DeepSeek Harness ${info.version}`,
-        noLink: true,
-        title: '发现新版本',
-        type: 'info',
-      }) === 0,
-      confirmInstall: async info => await showDesktopMessage({
-        buttons: ['重启并更新', '稍后'],
-        cancelId: 1,
-        defaultId: 0,
-        detail: `${updateDetail(info)}\n\n用户配置、会话和已安装插件会保留。`,
-        message: '新版本已下载完成',
-        noLink: true,
-        title: '可以安装更新',
-        type: 'info',
-      }) === 0,
-      reportError: async message => {
-        await showDesktopMessage({
-          buttons: ['确定'],
-          detail: `${message}\n\n你也可以前往 GitHub Releases 手动下载安装包。`,
-          message: '无法完成更新检查',
-          title: 'DeepSeek Harness 更新',
-          type: 'warning',
+      confirmDownload: async (info) => {
+        publishUpdateState({
+          availableVersion: info.version,
+          error: undefined,
+          progress: 0,
+          status: 'downloading',
         })
+        return true
       },
+      confirmInstall: async (info) => {
+        publishUpdateState({ availableVersion: info.version, progress: undefined, status: 'ready' })
+        return false
+      },
+      reportError: async error => publishUpdateState({ error, progress: undefined, status: 'error' }),
       reportNoUpdate: async currentVersion => {
-        await showDesktopMessage({
-          buttons: ['确定'],
-          detail: `已安装版本：${currentVersion}`,
-          message: '当前已是最新版本',
-          title: 'DeepSeek Harness 更新',
-          type: 'info',
-        })
+        publishUpdateState({ currentVersion, error: undefined, progress: undefined, status: 'up-to-date' })
       },
       setDownloadProgress: percent => {
         const window = mainWindow
-        if (window === undefined || window.isDestroyed()) return
-        window.setProgressBar(percent === undefined ? -1 : percent / 100)
+        if (window !== undefined && !window.isDestroyed()) {
+          window.setProgressBar(percent === undefined ? -1 : percent / 100)
+        }
+        if (percent !== undefined) publishUpdateState({ progress: percent, status: 'downloading' })
       },
     },
     updater: electronUpdater.autoUpdater as unknown as DesktopAutoUpdater,
@@ -202,9 +171,16 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     show: false,
     title: 'DeepSeek Harness',
+    titleBarOverlay: {
+      color: '#00000000',
+      height: TITLE_BAR_HEIGHT,
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#e6e8eb' : '#30343b',
+    },
+    titleBarStyle: 'hidden',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: preloadPath,
       sandbox: true,
     },
     width: 1440,
@@ -216,6 +192,7 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
   mainWindow = window
+  applyWindowColorScheme(nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
   return window
 }
 
@@ -350,6 +327,7 @@ if (!ownsInstance) {
   })
   void app.whenReady().then(async () => {
     configureDesktopUpdates()
+    configureDesktopIpc()
     await startApplication()
   })
 }

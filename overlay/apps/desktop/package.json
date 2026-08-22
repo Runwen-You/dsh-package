@@ -59,6 +59,7 @@
     "@deepseek-ai/dsh-storage-domain": "workspace:^",
     "@deepseek-ai/dsh-typert-registry": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
+    "@runwen-you/dsh-client-ui-desktop": "workspace:^",
     "electron-updater": "6.8.9",
     "pnpm": "11.7.0"
   },
