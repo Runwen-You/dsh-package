@@ -24,7 +24,7 @@ const DESKTOP_IPC = Object.freeze({
   checkForUpdates: 'dsh-desktop:update:check',
   getUpdateState: 'dsh-desktop:update:get-state',
   installUpdate: 'dsh-desktop:update:install',
-  setColorScheme: 'dsh-desktop:theme:set-color-scheme',
+  setColorScheme: 'dsh-desktop:window:set-color-scheme',
   updateState: 'dsh-desktop:update:state',
 })
 

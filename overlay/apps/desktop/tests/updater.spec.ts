@@ -35,6 +35,7 @@ function createUi(overrides: Partial<DesktopUpdateUi> = {}): DesktopUpdateUi {
     confirmInstall: vi.fn(async () => true),
     reportError: vi.fn(async () => undefined),
     reportNoUpdate: vi.fn(async () => undefined),
+    setChecking: vi.fn(),
     setDownloadProgress: vi.fn(),
     ...overrides,
   }
@@ -82,6 +83,36 @@ describe('desktop updater', () => {
     updater.emit('update-not-available', { version: '1.2.3' })
     await settle()
     expect(ui.reportNoUpdate).toHaveBeenCalledWith('1.2.3')
+  })
+
+  it('times out a stuck automatic check after a manual request and allows retrying', async () => {
+    vi.useFakeTimers()
+    try {
+      const updater = new FakeUpdater()
+      updater.checkForUpdates.mockImplementationOnce(async () => await new Promise(() => undefined))
+      const ui = createUi()
+      const controller = new DesktopUpdateController({
+        checkTimeoutMs: 1_000,
+        currentVersion: '1.2.3',
+        enabled: true,
+        prepareInstall: vi.fn(async () => undefined),
+        ui,
+        updater,
+      })
+
+      const automaticCheck = controller.check(false)
+      await controller.check(true)
+      expect(ui.setChecking).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      await automaticCheck
+      expect(ui.reportError).toHaveBeenCalledWith('检查更新超时，请检查网络连接后重试。')
+
+      await controller.check(true)
+      expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('downloads with consent and stops the backend before installing', async () => {

@@ -101,7 +101,6 @@ function applyWindowColorScheme(scheme: DesktopColorScheme): void {
 function configureDesktopIpc(): void {
   ipcMain.handle(DESKTOP_IPC.getUpdateState, () => updateState)
   ipcMain.handle(DESKTOP_IPC.checkForUpdates, async () => {
-    publishUpdateState({ error: undefined, progress: undefined, status: 'checking' })
     await desktopUpdater?.check(true)
   })
   ipcMain.handle(DESKTOP_IPC.installUpdate, async () => {
@@ -151,6 +150,12 @@ function configureDesktopUpdates(): void {
       reportNoUpdate: async currentVersion => {
         publishUpdateState({ currentVersion, error: undefined, progress: undefined, status: 'up-to-date' })
       },
+      setChecking: () => publishUpdateState({
+        availableVersion: undefined,
+        error: undefined,
+        progress: undefined,
+        status: 'checking',
+      }),
       setDownloadProgress: percent => {
         const window = mainWindow
         if (window !== undefined && !window.isDestroyed()) {

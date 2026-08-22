@@ -25,10 +25,12 @@ export interface DesktopUpdateUi {
   confirmInstall: (info: DesktopUpdateInfo) => Promise<boolean>
   reportError: (message: string) => Promise<void>
   reportNoUpdate: (currentVersion: string) => Promise<void>
+  setChecking: () => void
   setDownloadProgress: (percent: number | undefined) => void
 }
 
 export interface DesktopUpdateControllerOptions {
+  checkTimeoutMs?: number
   currentVersion: string
   enabled: boolean
   prepareInstall: () => Promise<void>
@@ -43,6 +45,23 @@ export function isPrereleaseVersion(version: string): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+export const DEFAULT_UPDATE_CHECK_TIMEOUT_MS = 15_000
+export const UPDATE_CHECK_TIMEOUT_MESSAGE = '检查更新超时，请检查网络连接后重试。'
+
+async function waitForUpdateCheck<T>(request: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      request,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(UPDATE_CHECK_TIMEOUT_MESSAGE)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
 }
 
 /** Coordinate update checks without coupling policy to Electron dialogs. */
@@ -88,11 +107,17 @@ export class DesktopUpdateController {
       if (manual) await this.options.ui.reportError('自动更新仅在已安装的正式应用中可用。')
       return
     }
-    if (this.checking || this.downloading || this.promptingForDownload || this.promptingForInstall) return
+    if (this.downloading || this.promptingForDownload || this.promptingForInstall) return
     this.manualCheck ||= manual
+    if (this.checking) {
+      if (manual) this.options.ui.setChecking()
+      return
+    }
+    if (manual) this.options.ui.setChecking()
     this.checking = true
     try {
-      await this.options.updater.checkForUpdates()
+      const timeoutMs = Math.max(1, this.options.checkTimeoutMs ?? DEFAULT_UPDATE_CHECK_TIMEOUT_MS)
+      await waitForUpdateCheck(this.options.updater.checkForUpdates(), timeoutMs)
     } catch (error) {
       const shouldReport = this.manualCheck
       this.manualCheck = false
