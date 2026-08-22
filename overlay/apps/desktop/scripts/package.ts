@@ -429,6 +429,10 @@ export async function packageWindowsDesktop(repositoryRoot: string): Promise<str
   await run(repositoryRoot, command('npm'), ['run', 'build:lib'])
   await run(repositoryRoot, command('corepack'), ['pnpm', '--filter', '@deepseek-ai/dsh-web-frontend', 'run', 'build'])
   await run(repositoryRoot, command('corepack'), ['pnpm', '--filter', '@deepseek-ai/dsh-desktop', 'run', 'build'])
+  await run(repositoryRoot, workspaceCommand(repositoryRoot, 'vitest'), [
+    'run',
+    'apps/desktop/tests/main.e2e.spec.ts',
+  ])
   await rm(paths.stageRoot, { force: true, recursive: true })
   await mkdir(paths.stageRoot, { recursive: true })
   const canonicalManifest = JSON.parse(await readFile(join(repositoryRoot, CANONICAL_RUNTIME_MANIFEST), 'utf8')) as RuntimeClosureManifest
