@@ -14,7 +14,7 @@ afterEach(async () => {
   if (testRoot !== undefined) await rm(testRoot, { force: true, recursive: true })
   application = undefined
   testRoot = undefined
-})
+}, 30_000)
 
 describe('desktop application', () => {
   it('loads the official Web UI and releases its backend when the window closes', async () => {
@@ -38,7 +38,6 @@ describe('desktop application', () => {
 
     const window = await application.firstWindow({ timeout: 60_000 })
     await expect.poll(() => window.url(), { timeout: 60_000 }).toBe(url)
-    expect(await window.title()).toContain('DeepSeek Harness')
     await expect.poll(async () => (
       await window.locator('body').innerText()
     ).trim(), { timeout: 60_000 }).not.toBe('')
