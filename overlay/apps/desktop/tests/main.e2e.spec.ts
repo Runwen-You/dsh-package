@@ -41,6 +41,9 @@ describe('desktop application', () => {
     await expect.poll(async () => (
       await window.locator('body').innerText()
     ).trim(), { timeout: 60_000 }).not.toBe('')
+    await expect.poll(() => window.evaluate(async () => (await fetch('/')).status), {
+      timeout: 15_000,
+    }).toBe(200)
     const updateState = await window.evaluate(async () => {
       const desktop = (window as unknown as {
         dshDesktop?: { getUpdateState?: () => Promise<unknown> }

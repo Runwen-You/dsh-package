@@ -100,6 +100,15 @@ describe('desktop package build', () => {
     })
   })
 
+  it('omits an unspecified version from a dependency-only runtime manifest', () => {
+    expect(createRuntimeClosureManifest({}, { dependencies: { example: '1.0.0' } })).toStrictEqual({
+      dependencies: { example: '1.0.0' },
+      name: 'dsh-desktop-runtime-closure',
+      private: true,
+      type: 'module',
+    })
+  })
+
   it('publishes the complete runtime closure to electron-builder dependency discovery', () => {
     expect(createPackagedDesktopManifest(
       {

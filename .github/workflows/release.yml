@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: corepack enable
 
+      - name: Test packager helpers
+        shell: powershell
+        run: .\tests\packager.tests.ps1
+
       - name: Resolve desktop and DSH release inputs
         id: release
         shell: pwsh

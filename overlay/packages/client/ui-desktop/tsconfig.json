@@ -7,7 +7,7 @@
   "include": ["src"],
   "references": [
     { "path": "../../../vendor/cordis" },
-    { "path": "../runtime" },
+    { "path": "../ui-renderer" },
     { "path": "../ui-settings" },
     { "path": "../ui-slots" },
     { "path": "../ui-theme" }

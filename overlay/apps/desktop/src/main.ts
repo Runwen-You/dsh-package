@@ -14,6 +14,7 @@ import {
   resolveDesktopPaths,
   stopProcessTree,
   waitForHttpReady,
+  waitForWebLaunchUrl,
 } from './runtime.ts'
 import type { BackendProcessHandle } from './runtime.ts'
 import { installDesktopUiCompatibility } from './ui-compatibility.ts'
@@ -282,7 +283,10 @@ async function startBackend(): Promise<string> {
   child.once('exit', () => log.end())
   const lifecycle = backendExitHandle(child)
   backend = lifecycle.handle
-  const url = `http://127.0.0.1:${port}/`
+  const url = await Promise.race([
+    waitForWebLaunchUrl(child, port, STARTUP_TIMEOUT_MS),
+    lifecycle.startupFailure,
+  ])
   await Promise.race([
     waitForHttpReady(url, { timeoutMs: STARTUP_TIMEOUT_MS }),
     lifecycle.startupFailure,
@@ -298,7 +302,7 @@ async function startApplication(): Promise<void> {
   try {
     const url = await startBackend()
     window.webContents.on('will-navigate', (event, target) => {
-      if (target.startsWith(url)) return
+      if (new URL(target).origin === new URL(url).origin) return
       event.preventDefault()
       if (target.startsWith('https://') || target.startsWith('http://')) void shell.openExternal(target)
     })

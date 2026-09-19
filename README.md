@@ -153,6 +153,12 @@ To build a specific upstream branch, tag, or commit, manually run **Build and pu
 - Optional local configuration: `build.config.ps1`
 - Isolation tests: `tests/packager.tests.ps1`
 
+The desktop and packaging preflight consume the CLI's reported Web launch URL, exchange its token through the upstream cookie login flow, and keep authentication enabled. They pass `--no-open` because the desktop owns the browser window.
+
+The desktop Web bridge uses Cordis `Context` and the `dsh-client-ui-renderer` slot service. Its dependency declarations and TypeScript references must match the upstream client packages. The desktop emits TypeScript declarations for the upstream project-reference build, and the canonical runtime is selected by the `python/sdk-runtime` workspace directory so an upstream package rename does not break deployment.
+
+Workspace discovery skips manifests without a package name, such as session snapshot fixtures. Overlay replacement preserves the upstream desktop runtime lock used by the shared third-party notice generator. The release workflow runs the packager helper regressions before preparing upstream source.
+
 Run `test.cmd` after changing the injection scripts. After changing the desktop app, run the full `build.cmd`; the build verifies that the deployed Web runtime can actually start before producing the installer.
 
 If upstream renames or removes a workspace package that the desktop app depends on, packaging will fail explicitly. In that case, update the overlay dependencies and runtime closure instead of modifying the official repository.

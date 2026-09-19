@@ -6,10 +6,9 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pngToIco from 'png-to-ico'
 import sharp from 'sharp'
-import { findAvailablePort, waitForHttpReady } from '../src/runtime.ts'
+import { findAvailablePort, waitForHttpReady, waitForWebLaunchUrl } from '../src/runtime.ts'
 
 const CANONICAL_RUNTIME_MANIFEST = 'python/sdk-runtime/package.json'
-const CANONICAL_RUNTIME_PACKAGE = 'dsh-jsonrpc-agent-pkg'
 
 /** Supported host properties required by the Windows x64 installer. */
 export interface DesktopBuildHost {
@@ -70,7 +69,7 @@ export function createRuntimeClosureManifest(
     name: 'dsh-desktop-runtime-closure',
     private: true,
     type: 'module',
-    version: desktopManifest.version,
+    ...(desktopManifest.version === undefined ? {} : { version: desktopManifest.version }),
   }
 }
 
@@ -291,7 +290,7 @@ async function preflightWebRuntime(paths: DesktopBuildPaths): Promise<void> {
   const nodeExecutable = join(paths.stageApp, 'node-runtime', 'node.exe')
   const cliEntry = join(paths.stageApp, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   const log = createWriteStream(logPath, { flags: 'w' })
-  const child = spawn(nodeExecutable, [cliEntry, 'web', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawn(nodeExecutable, [cliEntry, 'web', '--no-open', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: workspace,
     env: {
       ...process.env,
@@ -312,7 +311,7 @@ async function preflightWebRuntime(paths: DesktopBuildPaths): Promise<void> {
   })
   try {
     await Promise.race([
-      waitForHttpReady(`http://127.0.0.1:${port}/`, { timeoutMs: 45_000 }),
+      waitForWebLaunchUrl(child, port, 45_000).then(url => waitForHttpReady(url, { timeoutMs: 45_000 })),
       earlyExit,
     ])
     console.log(`desktop-package: deployed Web runtime passed HTTP preflight on port ${port}`)
@@ -448,10 +447,11 @@ export async function packageWindowsDesktop(repositoryRoot: string): Promise<str
   await run(repositoryRoot, command('corepack'), [
     'pnpm',
     '--filter',
-    CANONICAL_RUNTIME_PACKAGE,
+    './python/sdk-runtime',
     'deploy',
     '--legacy',
     '--prod',
+    '--config.allow-unused-patches=true',
     '--config.node-linker=hoisted',
     '--config.auto-install-peers=false',
     '--config.link-workspace-packages=true',
@@ -466,6 +466,7 @@ export async function packageWindowsDesktop(repositoryRoot: string): Promise<str
     'deploy',
     '--legacy',
     '--prod',
+    '--config.allow-unused-patches=true',
     '--config.node-linker=hoisted',
     '--config.auto-install-peers=false',
     '--config.link-workspace-packages=true',

@@ -153,6 +153,12 @@ $UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git'
 - 可选的本地配置：`build.config.ps1`
 - 隔离性测试：`tests/packager.tests.ps1`
 
+桌面端和打包预检会读取 CLI 输出的 Web 启动地址，通过上游的令牌与 Cookie 登录流程访问页面，保留默认认证。启动时传入 `--no-open`，由桌面窗口承载页面，避免额外打开系统浏览器。
+
+桌面 Web 桥接使用 Cordis 的 `Context` 和 `dsh-client-ui-renderer` 的插槽服务，依赖声明与 TypeScript 项目引用需要和上游客户端保持一致。桌面项目会生成类型声明以参与上游的项目引用编译；基础运行时按 `python/sdk-runtime` 的 workspace 目录定位，避免上游包名变更导致部署失败。
+
+工作区扫描会跳过没有包名的清单，例如会话快照中的测试配置。替换桌面覆盖层时会保留上游许可证清单生成器所需的运行时锁文件。发布工作流会先运行打包辅助函数的回归测试，再准备上游源码。
+
 修改注入脚本后运行 `test.cmd`。修改桌面端后应执行完整的 `build.cmd`；构建过程会验证部署后的 Web 运行时可以实际启动，然后才生成安装包。
 
 上游若改名、删除桌面端依赖的 workspace 包，打包会明确失败。此时需要更新覆盖层的依赖和运行时闭包，而不是修改官方仓库。

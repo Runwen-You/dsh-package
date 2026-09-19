@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { createInterface } from 'node:readline'
 import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
 
@@ -62,7 +63,7 @@ export function createBackendSpawnSpec(options: BackendSpawnOptions): BackendSpa
   }
   delete env.ELECTRON_RUN_AS_NODE
   return {
-    args: [options.cliEntry, 'web', '--host', '127.0.0.1', '--port', String(options.port)],
+    args: [options.cliEntry, 'web', '--no-open', '--host', '127.0.0.1', '--port', String(options.port)],
     command: options.nodeExecutable,
     options: {
       cwd: options.workspaceRoot,
@@ -104,6 +105,45 @@ export async function findAvailablePort(
   throw new Error(`No loopback port is available in range ${firstPort}-${firstPort + attempts - 1}.`)
 }
 
+/** Read the CLI's complete readiness line, including its optional launch token. */
+export function waitForWebLaunchUrl(
+  child: Pick<ChildProcess, 'stdout' | 'stderr' | 'once' | 'off'>,
+  port: number,
+  timeoutMs = 30_000,
+): Promise<string> {
+  return new Promise((resolveUrl, reject) => {
+    const expectedOrigin = new URL(`http://127.0.0.1:${port}`).origin
+    const streams = [child.stdout, child.stderr].filter(stream => stream !== null)
+    const readers = streams.map(input => createInterface({ input, crlfDelay: Infinity }))
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      for (const reader of readers) reader.close()
+      // readline.close() pauses its input; the backend log pipes must keep draining.
+      for (const stream of streams) stream.resume()
+      child.off('error', onError)
+      child.off('exit', onExit)
+    }
+    const onError = (error: Error): void => { cleanup(); reject(error) }
+    const onExit = (): void => onError(new Error('DeepSeek Harness exited before reporting its Web address.'))
+    const timer = setTimeout(() => {
+      onError(new Error(`DeepSeek Harness did not report its Web address within ${timeoutMs} ms.`))
+    }, timeoutMs)
+    child.once('error', onError)
+    child.once('exit', onExit)
+    for (const reader of readers) {
+      reader.on('line', (line: string) => {
+        const match = /^dsh web: (http:\/\/\S+)\s*$/.exec(line)
+        if (match?.[1] === undefined) return
+        let url: URL
+        try { url = new URL(match[1]) } catch { return }
+        if (url.origin !== expectedOrigin || url.pathname !== '/' || url.username || url.password) return
+        cleanup()
+        resolveUrl(url.href)
+      })
+    }
+  })
+}
+
 /** Injectable dependencies for deterministic HTTP readiness checks. */
 export interface HttpReadyOptions {
   fetchImpl?: typeof fetch
@@ -127,13 +167,23 @@ export async function waitForHttpReady(url: string, options: HttpReadyOptions = 
   const startedAt = now()
   for (;;) {
     try {
-      const response = await fetchImpl(url)
+      const response = await fetchImpl(url, { redirect: 'manual' })
       if (response.ok) return
+      if (response.status === 303 && response.headers.get('location') === '/' && new URL(url).searchParams.has('token')) {
+        const cookie = response.headers.get('set-cookie')?.split(';', 1)[0]
+        if (cookie !== undefined) {
+          const authenticated = await fetchImpl(new URL('/', url).href, {
+            headers: { cookie },
+            redirect: 'error',
+          })
+          if (authenticated.ok) return
+        }
+      }
     } catch {
       // Startup polling owns connection failures until the shared deadline.
     }
     if (now() - startedAt >= timeoutMs) {
-      throw new Error(`DeepSeek Harness did not become ready at ${url} within ${timeoutMs} ms.`)
+      throw new Error(`DeepSeek Harness did not become ready at ${new URL(url).origin}/ within ${timeoutMs} ms.`)
     }
     await sleep(intervalMs)
   }

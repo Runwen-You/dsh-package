@@ -122,7 +122,8 @@ function Remove-UnavailableWorkspaceDependencies {
         try {
             $packageJson = [System.IO.File]::ReadAllText($packagePath.FullName, [System.Text.Encoding]::UTF8)
             $packageManifest = $packageJson | ConvertFrom-Json
-            if (-not [string]::IsNullOrWhiteSpace([string]$packageManifest.name)) {
+            $nameProperty = $packageManifest.PSObject.Properties['name']
+            if ($null -ne $nameProperty -and -not [string]::IsNullOrWhiteSpace([string]$nameProperty.Value)) {
                 $availablePackages[[string]$packageManifest.name] = $true
             }
         }
@@ -156,7 +157,8 @@ function Add-RequiredWorkspacePeers {
     foreach ($packagePath in Get-ChildItem -LiteralPath $WorkingRoot -Filter 'package.json' -File -Recurse | Where-Object { $_.FullName -notmatch '[\\/](?:node_modules|\.git)[\\/]' }) {
         $packageJson = [System.IO.File]::ReadAllText($packagePath.FullName, [System.Text.Encoding]::UTF8)
         $packageManifest = $packageJson | ConvertFrom-Json
-        if (-not [string]::IsNullOrWhiteSpace([string]$packageManifest.name)) {
+        $nameProperty = $packageManifest.PSObject.Properties['name']
+        if ($null -ne $nameProperty -and -not [string]::IsNullOrWhiteSpace([string]$nameProperty.Value)) {
             $workspacePackages[[string]$packageManifest.name] = $packageManifest
         }
     }
@@ -244,11 +246,22 @@ function Install-DesktopOverlay {
     if (-not (Test-Path -LiteralPath (Join-Path $source 'package.json'))) {
         throw "Desktop overlay is incomplete: $source"
     }
+    # Upstream's repository-wide typecheck imports this desktop build metadata.
+    # Preserve its exact bytes while replacing the upstream application sources.
+    $runtimeLockPath = Join-Path $destination 'scripts\primary-runtime-lock.json'
+    [byte[]]$runtimeLockBytes = $null
+    if (Test-Path -LiteralPath $runtimeLockPath -PathType Leaf) {
+        $runtimeLockBytes = [System.IO.File]::ReadAllBytes($runtimeLockPath)
+    }
     if (Test-Path -LiteralPath $destination) {
         Remove-Item -LiteralPath $destination -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+    if ($null -ne $runtimeLockBytes) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeLockPath) | Out-Null
+        [System.IO.File]::WriteAllBytes($runtimeLockPath, $runtimeLockBytes)
+    }
 
     $clientSource = Join-Path $OverlayRoot 'packages\client\ui-desktop'
     $clientDestination = Join-Path $WorkingRoot 'packages\client\ui-desktop'
