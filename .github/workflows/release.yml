@@ -3,8 +3,6 @@ name: Build and publish desktop updates
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -61,7 +59,11 @@ jobs:
           git -C $upstreamPath fetch --force --tags origin
           $requestedRef = $env:REQUESTED_REF
           if ([string]::IsNullOrWhiteSpace($requestedRef)) {
-            $requestedRef = 'origin/HEAD'
+            . ./build.config.ps1
+            $requestedRef = $UpstreamRef
+            if ([string]::IsNullOrWhiteSpace($requestedRef)) {
+              throw 'Set a validated UpstreamRef in build.config.ps1 or provide upstream_ref when running manually.'
+            }
           }
           $upstreamCommit = (git -C $upstreamPath rev-parse --verify "${requestedRef}^{commit}").Trim()
           $upstreamManifest = (git -C $upstreamPath show "${upstreamCommit}:package.json" | Out-String | ConvertFrom-Json)

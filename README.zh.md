@@ -106,8 +106,8 @@ dsh plugin --profile web remove <插件包名>
 
 ```powershell
 $UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git'
-# 可选：固定到某个标签、分支或提交；留空使用上游默认分支的最新提交
-# $UpstreamRef = 'v0.1.0'
+# 默认：已通过完整 Windows 安装包验证的 DSH 0.1.6-alpha.2
+$UpstreamRef = 'ddefc45fbc7f8e46dd73185e68295696d1297887'
 ```
 
 也可以在命令行直接覆盖，命令行参数优先级最高：
@@ -123,7 +123,7 @@ $UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git'
 
 ## 官方项目更新后重新打包
 
-再次双击 `build.cmd` 即可。默认流程每次都会执行 `git fetch`，并从上游默认分支的最新提交重新构建，不需要把打包代码合并进官方项目。
+再次双击 `build.cmd` 即可。每次构建都会执行 `git fetch`，然后使用 `build.config.ps1` 中已验证的上游提交。本地构建和 GitHub 发布共用这个固定版本，避免上游变更自动破坏默认构建。更新固定版本前应先验证兼容性，不需要把打包代码合并进官方项目。
 
 需要固定到某个官方标签或提交时：
 
@@ -141,9 +141,9 @@ $UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git'
 
 ## 自动发布新版本
 
-`.github/workflows/release.yml` 会在本仓库 `main` 分支更新时、每天定时检查时，或手动运行时检查官方上游版本。若对应的 `v<version>` Release 尚不存在，它会在 Windows runner 上完成测试和打包，并发布安装包、`latest.yml`、差分文件和构建元数据；已经发布过的版本会跳过。
+`.github/workflows/release.yml` 会在本仓库 `main` 分支更新时或手动运行时检查官方上游版本。已关闭每日定时构建，避免上游兼容性问题尚未修复时反复发送失败通知。桌面源码或内置 DSH 源码与最新发布版不同时，它会在 Windows runner 上完成测试和打包，并发布安装包、`latest.yml`、差分文件和构建元数据；源码没有变化时会跳过。
 
-如需固定某个上游分支、标签或提交，可在 GitHub Actions 中手动运行 **Build and publish desktop updates**，填写可选的 `upstream_ref`。工作流需要仓库允许 `GITHUB_TOKEN` 写入 Releases。
+如需测试其他上游分支、标签或提交，可在 GitHub Actions 中手动运行 **Build and publish desktop updates**，填写可选的 `upstream_ref`；留空使用 `build.config.ps1` 中已验证的提交。工作流需要仓库允许 `GITHUB_TOKEN` 写入 Releases。
 
 ## 维护打包代码
 

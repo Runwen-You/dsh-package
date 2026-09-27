@@ -106,8 +106,8 @@ The upstream URL defaults to the official repository and is fetched from GitHub 
 
 ```powershell
 $UpstreamUrl = 'https://github.com/deepseek-ai/deepseek-harness.git'
-# Optional: pin a tag, branch, or commit; leave empty to use the latest commit on the upstream default branch
-# $UpstreamRef = 'v0.1.0'
+# Default: DSH 0.1.6-alpha.2, verified with a complete Windows installer build
+$UpstreamRef = 'ddefc45fbc7f8e46dd73185e68295696d1297887'
 ```
 
 You can also override it directly on the command line. Command-line arguments have the highest priority:
@@ -123,7 +123,7 @@ After switching the upstream URL, if `.cache/upstream` still contains a cached o
 
 ## Rebuilding after an upstream update
 
-Just double-click `build.cmd` again. By default each run performs `git fetch` and rebuilds from the latest commit on the upstream default branch, so you do not need to merge the packaging code into the official project.
+Just double-click `build.cmd` again. Each run performs `git fetch` and builds the validated upstream commit in `build.config.ps1`. Local builds and GitHub releases share this pin so upstream changes cannot silently break the default build. Validate compatibility before updating the pin; you do not need to merge packaging code into the official project.
 
 To pin a specific official tag or commit:
 
@@ -141,9 +141,9 @@ Local mode reads only the committed snapshot of the given repository; it does no
 
 ## Publishing new versions automatically
 
-`.github/workflows/release.yml` checks the official upstream version after pushes to this repository's `main` branch, on a daily schedule, or when run manually. If the matching `v<version>` Release does not exist, a Windows runner tests and builds the package, then publishes the installer, `latest.yml`, differential blockmap, and build metadata. Existing versions are skipped.
+`.github/workflows/release.yml` checks the official upstream version after pushes to this repository's `main` branch or when run manually. Daily scheduled builds are disabled to avoid repeated failure notifications while upstream compatibility needs attention. If the desktop or bundled DSH source has changed since the latest release, a Windows runner tests and builds the package, then publishes the installer, `latest.yml`, differential blockmap, and build metadata. Unchanged sources are skipped.
 
-To build a specific upstream branch, tag, or commit, manually run **Build and publish desktop updates** in GitHub Actions and fill in the optional `upstream_ref`. The repository must allow its `GITHUB_TOKEN` to write Releases.
+To test a different upstream branch, tag, or commit, manually run **Build and publish desktop updates** in GitHub Actions and fill in the optional `upstream_ref`. Leaving it empty uses the validated commit in `build.config.ps1`. The repository must allow its `GITHUB_TOKEN` to write Releases.
 
 ## Maintaining the packaging code
 
